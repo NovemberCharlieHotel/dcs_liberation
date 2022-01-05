@@ -17,8 +17,13 @@ class QBuildingInfo(QGroupBox):
         path = os.path.join(
             "./resources/ui/units/buildings/" + self.building.dcs_identifier + ".png"
         )
+        custom_path = os.path.join(
+            "./resources/campaigns/recon-pictures/" + self.building.dcs_identifier + ".png"
+        )
         if self.building.is_dead:
             pixmap = QPixmap("./resources/ui/units/buildings/dead.png")
+        elif os.path.isfile(custom_path):
+            pixmap = QPixmap(custom_path)
         elif os.path.isfile(path):
             pixmap = QPixmap(path)
         else:
