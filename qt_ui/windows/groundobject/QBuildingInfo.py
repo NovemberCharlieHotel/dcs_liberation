@@ -15,7 +15,7 @@ class QBuildingInfo(QGroupBox):
     def init_ui(self):
         self.header = QLabel()
         custom_path = os.path.join(
-            "./resources/campaigns/recon-pictures" + self.building.dcs_identifier + ".png"
+            "./resources/campaigns/recon-pictures/" + self.building.dcs_identifier + ".png"
         )
         path = os.path.join(
             "./resources/ui/units/buildings/" + self.building.dcs_identifier + ".png"
