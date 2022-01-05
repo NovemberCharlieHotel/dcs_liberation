@@ -23,7 +23,7 @@ class QBuildingInfo(QGroupBox):
         if self.building.is_dead:
             pixmap = QPixmap("./resources/ui/units/buildings/dead.png")
         elif os.path.isfile(custom_path):
-            pixmap = QPixmap(custrom_path)
+            pixmap = QPixmap(custom_path)
         elif os.path.isfile(path):
             pixmap = QPixmap(path)
         else:
