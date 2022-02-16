@@ -44,7 +44,7 @@ from game.dcs.aircrafttype import AircraftType
 from game.radio.radios import RadioFrequency
 from game.theater import ConflictTheater, LatLon, TheaterGroundObject
 from game.theater.bullseye import Bullseye
-from game.utils import meters
+from game.utils import Distance, UnitSystem, meters, mps, pounds
 from game.weather import Weather
 from gen.runways import RunwayData
 from .aircraft.flightdata import FlightData
@@ -202,11 +202,12 @@ class FlightPlanBuilder:
 
     WAYPOINT_DESC_MAX_LEN = 25
 
-    def __init__(self, start_time: datetime.datetime) -> None:
+    def __init__(self, start_time: datetime.datetime, units: UnitSystem) -> None:
         self.start_time = start_time
         self.rows: List[List[str]] = []
         self.target_points: List[NumberedWaypoint] = []
         self.last_waypoint: Optional[FlightWaypoint] = None
+        self.units = units
 
     def add_waypoint(self, waypoint_num: int, waypoint: FlightWaypoint) -> None:
         if waypoint.waypoint_type == FlightWaypointType.TARGET_POINT:
@@ -251,8 +252,9 @@ class FlightPlanBuilder:
                     waypoint.waypoint.pretty_name,
                     FlightPlanBuilder.WAYPOINT_DESC_MAX_LEN,
                 ),
-                str(int(waypoint.waypoint.alt.feet)),
+                self._format_alt(waypoint.waypoint.alt),
                 self._waypoint_distance(waypoint.waypoint),
+                self._waypoint_bearing(waypoint.waypoint),
                 self._ground_speed(waypoint.waypoint),
                 self._format_time(waypoint.waypoint.tot),
                 self._format_time(waypoint.waypoint.departure_time),
@@ -264,7 +266,10 @@ class FlightPlanBuilder:
         if time is None:
             return ""
         local_time = self.start_time + time
-        return local_time.strftime(f"%H:%M:%S")
+        return f"{local_time.strftime('%H:%M:%S')}{'Z' if local_time.tzinfo is not None else ''}"
+
+    def _format_alt(self, alt: Distance) -> str:
+        return f"{self.units.distance_short(alt):.0f}"
 
     def _waypoint_distance(self, waypoint: FlightWaypoint) -> str:
         if self.last_waypoint is None:
@@ -273,7 +278,15 @@ class FlightPlanBuilder:
         distance = meters(
             self.last_waypoint.position.distance_to_point(waypoint.position)
         )
-        return f"{distance.nautical_miles:.1f} NM"
+
+        return f"{self.units.distance_long(distance):.1f}"
+
+    def _waypoint_bearing(self, waypoint: FlightWaypoint) -> str:
+        if self.last_waypoint is None:
+            return "-"
+        bearing = self.last_waypoint.position.heading_between_point(waypoint.position)
+
+        return f"{(bearing):.0f}"
 
     def _ground_speed(self, waypoint: FlightWaypoint) -> str:
         if self.last_waypoint is None:
@@ -289,17 +302,19 @@ class FlightPlanBuilder:
         else:
             return "-"
 
-        distance = meters(
+        speed = mps(
             self.last_waypoint.position.distance_to_point(waypoint.position)
+            / (waypoint.tot - last_time).total_seconds()
         )
-        duration = (waypoint.tot - last_time).total_seconds() / 3600
-        return f"{int(distance.nautical_miles / duration)} kt"
 
-    @staticmethod
-    def _format_min_fuel(min_fuel: Optional[float]) -> str:
+        return f"{self.units.speed(speed):.0f}"
+
+    def _format_min_fuel(self, min_fuel: Optional[float]) -> str:
         if min_fuel is None:
             return ""
-        return str(math.ceil(min_fuel / 100) * 100)
+
+        mass = pounds(min_fuel)
+        return f"{math.ceil(self.units.mass(mass) / 100) * 100:.0f}"
 
     def build(self) -> List[List[str]]:
         return self.rows
@@ -349,16 +364,35 @@ class BriefingPage(KneeboardPage):
         )
 
         writer.heading("Flight Plan")
-        flight_plan_builder = FlightPlanBuilder(self.start_time)
+
+        units = self.flight.aircraft_type.kneeboard_units
+
+        flight_plan_builder = FlightPlanBuilder(self.start_time, units)
         for num, waypoint in enumerate(self.flight.waypoints):
             flight_plan_builder.add_waypoint(num, waypoint)
+
+        uom_row = [
+            [
+                "",
+                "",
+                units.distance_short_uom,
+                units.distance_long_uom,
+                "T",
+                units.speed_uom,
+                "",
+                "",
+                units.mass_uom,
+            ]
+        ]
+
         writer.table(
-            flight_plan_builder.build(),
+            flight_plan_builder.build() + uom_row,
             headers=[
                 "#",
                 "Action",
                 "Alt",
                 "Dist",
+                "Brg",
                 "GSPD",
                 "Time",
                 "Departure",
@@ -377,15 +411,18 @@ class BriefingPage(KneeboardPage):
         )
         writer.text(f"QNH: {qnh_in_hg} inHg / {qnh_mm_hg} mmHg / {qnh_hpa} hPa")
 
-        writer.table(
-            [
+        fl = self.flight
+
+        if fl.bingo_fuel and fl.joker_fuel:
+            writer.table(
                 [
-                    "{}lbs".format(self.flight.bingo_fuel),
-                    "{}lbs".format(self.flight.joker_fuel),
-                ]
-            ],
-            ["Bingo", "Joker"],
-        )
+                    [
+                        f"{units.mass(pounds(fl.bingo_fuel)):.0f} {units.mass_uom}",
+                        f"{units.mass(pounds(fl.joker_fuel)):.0f} {units.mass_uom}",
+                    ]
+                ],
+                ["Bingo", "Joker"],
+            )
 
         if any(self.flight.laser_codes):
             codes: list[list[str]] = []
@@ -557,7 +594,7 @@ class SupportPage(KneeboardPage):
         if time is None:
             return ""
         local_time = self.start_time + time
-        return local_time.strftime(f"%H:%M:%S")
+        return f"{local_time.strftime('%H:%M:%S')}{'Z' if local_time.tzinfo is not None else ''}"
 
 
 class SeadTaskPage(KneeboardPage):
@@ -716,13 +753,21 @@ class KneeboardGenerator(MissionInfoGenerator):
 
     def generate_flight_kneeboard(self, flight: FlightData) -> List[KneeboardPage]:
         """Returns a list of kneeboard pages for the given flight."""
+
+        if flight.aircraft_type.utc_kneeboard:
+            zoned_time = self.game.conditions.start_time.replace(
+                tzinfo=self.game.theater.timezone
+            ).astimezone(datetime.timezone.utc)
+        else:
+            zoned_time = self.game.conditions.start_time
+
         pages: List[KneeboardPage] = [
             BriefingPage(
                 flight,
                 self.game.bullseye_for(flight.friendly),
                 self.game.theater,
                 self.game.conditions.weather,
-                self.game.conditions.start_time,
+                zoned_time,
                 self.dark_kneeboard,
             ),
             SupportPage(
@@ -731,7 +776,7 @@ class KneeboardGenerator(MissionInfoGenerator):
                 self.awacs,
                 self.tankers,
                 self.jtacs,
-                self.game.conditions.start_time,
+                zoned_time,
                 self.dark_kneeboard,
             ),
         ]

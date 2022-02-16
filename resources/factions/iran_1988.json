@@ -8,6 +8,7 @@
   ],
   "aircrafts": [
     "AH-1J SeaCobra",
+    "F-14A Tomcat (AI)",
     "F-14A Tomcat (Block 135-GR Late)",
     "F-4E Phantom II",
     "F-5E Tiger II",
@@ -26,7 +27,8 @@
     "M113",
     "M60A3 \"Patton\"",
     "ZSU-23-4 Shilka",
-    "ZU-23 on Ural-375"
+    "ZU-23 on Ural-375",
+    "ZSU-57-2 'Sparka'"
   ],
   "artillery_units": [
     "2S1 Gvozdika",
@@ -49,6 +51,7 @@
     "ZSU23Generator",
     "ZU23InsurgentGenerator",
     "ZU23UralInsurgentGenerator",
+    "ZSU57Generator",
     "ColdWarFlakGenerator"
   ],
   "ewrs": [

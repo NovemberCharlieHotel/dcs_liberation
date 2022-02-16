@@ -14,6 +14,7 @@ from dcs.planes import (
     B_17G,
     FA_18C_hornet,
     F_16C_50,
+    F_14A,
     Ju_88A4,
     P_51D_30_NA,
     plane_map,
@@ -48,17 +49,21 @@ from pydcs_extensions.hercules.hercules import Hercules
 from pydcs_extensions.jas39.jas39 import JAS39Gripen, JAS39Gripen_AG
 from pydcs_extensions.eurofighter.eurofighter import Eurofighter
 from pydcs_extensions.su57.su57 import Su_57
+from pydcs_extensions.uh60l.uh60l import UH_60L, KC130J
 
 plane_map["A-4E-C"] = A_4E_C
 plane_map["F-22A"] = F_22A
 plane_map["Su-57"] = Su_57
 plane_map["Hercules"] = Hercules
+plane_map["KC130J"] = KC130J
 plane_map["JAS39Gripen"] = JAS39Gripen
 plane_map["JAS39Gripen_AG"] = JAS39Gripen_AG
 plane_map["Eurofighter"] = Eurofighter
 plane_map["VSN_F104G"] = VSN_F104G
 plane_map["VSN_F104S"] = VSN_F104S
 plane_map["VSN_F104S_AG"] = VSN_F104S_AG
+
+helicopter_map["UH-60L"] = UH_60L
 
 vehicle_map["FieldHL"] = frenchpack._FIELD_HIDE
 vehicle_map["HARRIERH"] = frenchpack._FIELD_HIDE_SMALL
@@ -264,6 +269,7 @@ is livery name as found in mission editor.
 """
 PLANE_LIVERY_OVERRIDES: dict[Type[FlyingType], str] = {
     FA_18C_hornet: "VFA-34",  # default livery for the hornet is blue angels one
+    F_14A: "vf-142 `ghost riders`",  # default livery for the AI F-14A is the black demo scheme
 }
 
 """
