@@ -33,7 +33,11 @@ from game.radio.channels import (
 from game.utils import (
     Distance,
     SPEED_OF_SOUND_AT_SEA_LEVEL,
+    ImperialUnits,
+    MetricUnits,
+    NauticalUnits,
     Speed,
+    UnitSystem,
     feet,
     knots,
     kph,
@@ -153,6 +157,12 @@ class AircraftType(UnitType[Type[FlyingType]]):
     # If true, the aircraft does not use the guns as the last resort weapons, but as a
     # main weapon. It'll RTB when it doesn't have gun ammo left.
     gunfighter: bool
+
+    # UnitSystem to use for the kneeboard, defaults to Nautical (kt/nm/ft)
+    kneeboard_units: UnitSystem
+
+    # If true, kneeboards will display zulu times
+    utc_kneeboard: bool
 
     max_group_size: int
     patrol_altitude: Optional[Distance]
@@ -370,6 +380,13 @@ class AircraftType(UnitType[Type[FlyingType]]):
         except KeyError:
             introduction = "No data."
 
+        units_data = data.get("kneeboard_units", "nautical").lower()
+        units: UnitSystem = NauticalUnits()
+        if units_data == "imperial":
+            units = ImperialUnits()
+        if units_data == "metric":
+            units = MetricUnits()
+
         for variant in data.get("variants", [aircraft.id]):
             yield AircraftType(
                 dcs_unit_type=aircraft,
@@ -395,4 +412,6 @@ class AircraftType(UnitType[Type[FlyingType]]):
                 intra_flight_radio=radio_config.intra_flight,
                 channel_allocator=radio_config.channel_allocator,
                 channel_namer=radio_config.channel_namer,
+                kneeboard_units=units,
+                utc_kneeboard=data.get("utc_kneeboard", False),
             )

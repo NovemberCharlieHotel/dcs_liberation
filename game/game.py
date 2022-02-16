@@ -6,7 +6,7 @@ import math
 from collections.abc import Iterator
 from datetime import date, datetime, timedelta
 from enum import Enum
-from typing import Any, List, TYPE_CHECKING, Type, Union, cast
+from typing import Any, List, TYPE_CHECKING, Type, TypeVar, Union, cast
 
 from dcs.countries import Switzerland, USAFAggressors, UnitedNationsPeacekeepers
 from dcs.country import Country
@@ -17,6 +17,7 @@ from faker import Faker
 
 from game.models.game_stats import GameStats
 from game.plugins import LuaPluginManager
+from game.utils import Distance
 from gen import naming
 from gen.flights.closestairfields import ObjectiveDistanceCache
 from gen.ground_forces.ai_ground_planner import GroundPlanner
@@ -30,13 +31,15 @@ from .profiling import logged_duration
 from .settings import Settings
 from .theater import ConflictTheater
 from .theater.bullseye import Bullseye
+from .theater.theatergroundobject import (
+    EwrGroundObject,
+    SamGroundObject,
+    TheaterGroundObject,
+)
 from .theater.transitnetwork import TransitNetwork, TransitNetworkBuilder
 from .weather import Conditions, TimeOfDay
 
 if TYPE_CHECKING:
-    from game.missiongenerator.frontlineconflictdescription import (
-        FrontLineConflictDescription,
-    )
     from .ato.airtaaskingorder import AirTaskingOrder
     from .navmesh import NavMesh
     from .squadrons import AirWing
@@ -208,7 +211,7 @@ class Game:
         naming.namegen = self.name_generator
         LuaPluginManager.load_settings(self.settings)
         ObjectiveDistanceCache.set_theater(self.theater)
-        self.compute_conflicts_position()
+        self.compute_unculled_zones()
         if not game_still_initializing:
             self.compute_threat_zones()
 
@@ -347,8 +350,6 @@ class Game:
             return self.process_win_loss(turn_state)
 
         # Plan flights & combat for next turn
-        with logged_duration("Computing conflict positions"):
-            self.compute_conflicts_position()
         with logged_duration("Threat zone computation"):
             self.compute_threat_zones()
 
@@ -365,6 +366,10 @@ class Game:
                 gplanner = GroundPlanner(cp, self)
                 gplanner.plan_groundwar()
                 self.ground_planners[cp.id] = gplanner
+
+        # Update cull zones
+        with logged_duration("Computing culling positions"):
+            self.compute_unculled_zones()
 
     def message(self, title: str, text: str = "") -> None:
         self.informations.append(Information(title, text, turn=self.turn))
@@ -406,10 +411,9 @@ class Game:
     def navmesh_for(self, player: bool) -> NavMesh:
         return self.coalition_for(player).nav_mesh
 
-    def compute_conflicts_position(self) -> None:
+    def compute_unculled_zones(self) -> None:
         """
-        Compute the current conflict center position(s), mainly used for culling calculation
-        :return: List of points of interests
+        Compute the current conflict position(s) used for culling calculation
         """
         from game.missiongenerator.frontlineconflictdescription import (
             FrontLineConflictDescription,
@@ -491,6 +495,30 @@ class Game:
             if z.distance_to_point(pos) < self.settings.perf_culling_distance * 1000:
                 return False
         return True
+
+    def iads_considerate_culling(self, tgo: TheaterGroundObject[Any]) -> bool:
+        if not self.settings.perf_do_not_cull_threatening_iads:
+            return self.position_culled(tgo.position)
+        else:
+            if self.settings.perf_culling:
+                if isinstance(tgo, EwrGroundObject):
+                    max_detection_range = tgo.max_detection_range().meters
+                    for z in self.__culling_zones:
+                        seperation = z.distance_to_point(tgo.position)
+                        # Don't cull EWR if in detection range.
+                        if seperation < max_detection_range:
+                            return False
+                if isinstance(tgo, SamGroundObject):
+                    max_threat_range = tgo.max_threat_range().meters
+                    for z in self.__culling_zones:
+                        seperation = z.distance_to_point(tgo.position)
+                        # Create a 12nm buffer around nearby SAMs.
+                        respect_bubble = (
+                            max_threat_range + Distance.from_nautical_miles(12).meters
+                        )
+                        if seperation < respect_bubble:
+                            return False
+            return self.position_culled(tgo.position)
 
     def get_culling_zones(self) -> list[Point]:
         """

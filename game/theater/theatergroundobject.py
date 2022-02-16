@@ -173,7 +173,9 @@ class TheaterGroundObject(MissionTarget, Generic[GroupT]):
         return self._max_range_of_type(group, "detection_range")
 
     def max_threat_range(self) -> Distance:
-        return max(self.threat_range(g) for g in self.groups)
+        return (
+            max(self.threat_range(g) for g in self.groups) if self.groups else meters(0)
+        )
 
     def threat_range(self, group: GroupT, radar_only: bool = False) -> Distance:
         return self._max_range_of_type(group, "threat_range")
@@ -536,7 +538,7 @@ class SamGroundObject(IadsGroundObject):
         max_tel_range = meters(0)
         for launcher in launchers:
             if LAUNCHER_TRACKER_PAIRS[launcher] in live_trs:
-                max_tel_range = max(max_tel_range, meters(unit_type.threat_range))
+                max_tel_range = max(max_tel_range, meters(launcher.threat_range))
         if radar_only:
             return max(max_tel_range, max_telar_range)
         else:

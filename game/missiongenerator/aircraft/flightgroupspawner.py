@@ -5,7 +5,7 @@ from typing import Any, Union
 from dcs import Mission, Point
 from dcs.country import Country
 from dcs.mission import StartType as DcsStartType
-from dcs.planes import Su_33
+from dcs.planes import F_14A, Su_33
 from dcs.point import PointAction
 from dcs.ships import KUZNECOW
 from dcs.terrain import Airport, NoParkingSlotError
@@ -14,13 +14,22 @@ from dcs.unitgroup import FlyingGroup, ShipGroup, StaticGroup
 from game.ato import Flight
 from game.ato.flightstate import InFlight
 from game.ato.starttype import StartType
-from game.theater import Airfield, ControlPoint, NavalControlPoint, OffMapSpawn
-from game.utils import meters
+from game.theater import Airfield, ControlPoint, Fob, NavalControlPoint, OffMapSpawn
+from game.utils import feet, meters
 from gen.flights.traveltime import GroundSpeed
 from gen.naming import namegen
 
 WARM_START_HELI_ALT = meters(500)
 WARM_START_ALTITUDE = meters(3000)
+
+# In-flight spawns are MSL for the first waypoint (this can maybe be changed to AGL, but
+# AGL waypoints have different piloting behavior, so we need to check whether that's
+# safe to do first), so spawn them high enough that they're unlikely to be near (or
+# under) the ground, or any nearby obstacles. The highest airfield in DCS is Kerman in
+# PG at 5700ft. This could still be too low if there are tall obstacles near the
+# airfield, but the lowest we can push this the better to avoid spawning helicopters
+# well above the altitude for WP1.
+MINIMUM_MID_MISSION_SPAWN_ALTITUDE = feet(6000)
 
 RTB_ALTITUDE = meters(800)
 RTB_DISTANCE = 5000
@@ -101,17 +110,18 @@ class FlightGroupSpawner:
                         f"{carrier_group.__class__.__name__}, expected a ShipGroup"
                     )
                 return self._generate_at_group(name, carrier_group)
-            else:
-                # If the flight is an helicopter flight, then prioritize dedicated
-                # helipads
-                if self.flight.unit_type.helicopter:
-                    return self._generate_at_cp_helipad(name, cp)
-
-                if not isinstance(cp, Airfield):
+            elif isinstance(cp, Fob):
+                if not self.flight.unit_type.helicopter:
                     raise RuntimeError(
-                        f"Attempted to spawn at airfield for non-airfield {cp}"
+                        f"Cannot spawn fixed-wing aircraft at {cp} because it is a FOB"
                     )
+                return self._generate_at_cp_helipad(name, cp)
+            elif isinstance(cp, Airfield):
                 return self._generate_at_airport(name, cp.airport)
+            else:
+                raise NotImplementedError(
+                    f"Aircraft spawn behavior not implemented for {cp} ({cp.__class__})"
+                )
         except NoParkingSlotError:
             # Generated when there is no place on Runway or on Parking Slots
             logging.warning(
@@ -130,6 +140,13 @@ class FlightGroupSpawner:
         pos = self.flight.state.estimate_position()
         pos += Point(random.randint(100, 1000), random.randint(100, 1000))
         alt, alt_type = self.flight.state.estimate_altitude()
+
+        # We don't know where the ground is, so just make sure that any aircraft
+        # spawning at an MSL altitude is spawned at some minimum altitude.
+        # https://github.com/dcs-liberation/dcs_liberation/issues/1941
+        if alt_type == "BARO" and alt < MINIMUM_MID_MISSION_SPAWN_ALTITUDE:
+            alt = MINIMUM_MID_MISSION_SPAWN_ALTITUDE
+
         group = self.mission.flight_group(
             country=self.country,
             name=name,
@@ -211,6 +228,7 @@ class FlightGroupSpawner:
 
     def _generate_at_cp_helipad(self, name: str, cp: ControlPoint) -> FlyingGroup[Any]:
         try:
+            # helipad = self.helipads[cp][0]
             helipad = self.helipads[cp].pop()
         except IndexError as ex:
             raise RuntimeError(f"Not enough helipads available at {cp}") from ex
@@ -218,18 +236,18 @@ class FlightGroupSpawner:
         group = self._generate_at_group(name, helipad)
 
         # Note : A bit dirty, need better support in pydcs
-        group.points[0].action = PointAction.FromGroundArea
-        group.points[0].type = "TakeOffGround"
+        group.points[0].action = PointAction.FromParkingArea
+        group.points[0].type = "TakeOffParking"
         group.units[0].heading = helipad.units[0].heading
         if self.start_type is not StartType.COLD:
-            group.points[0].action = PointAction.FromGroundAreaHot
-            group.points[0].type = "TakeOffGroundHot"
+            group.points[0].action = PointAction.FromParkingArea
+            group.points[0].type = "TakeOffParkingHot"
 
         for i in range(self.flight.count - 1):
+            group.units[1 + i].position = Point(helipad.x, helipad.y)
+            group.units[1 + i].heading = helipad.units[0].heading
             try:
-                helipad = self.helipads[cp].pop()
-                group.units[1 + i].position = Point(helipad.x, helipad.y)
-                group.units[1 + i].heading = helipad.units[0].heading
+                self.helipads[cp].pop()
             except IndexError as ex:
                 raise RuntimeError(f"Not enough helipads available at {cp}") from ex
         return group
@@ -251,7 +269,9 @@ class FlightGroupSpawner:
         # Setting Su-33s starting from the non-supercarrier Kuznetsov to take off from
         # runway to work around a DCS AI issue preventing Su-33s from taking off when
         # set to "Takeoff from ramp" (#1352)
-        if (
+        # Also setting the F-14A AI variant to start from cats since they are reported
+        # to have severe pathfinding problems when doing ramp starts (#1927)
+        if self.flight.unit_type.dcs_unit_type == F_14A or (
             self.flight.unit_type.dcs_unit_type == Su_33
             and group_units[0] is not None
             and group_units[0].type == KUZNECOW.id
